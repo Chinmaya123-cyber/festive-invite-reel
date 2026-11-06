@@ -1,0 +1,10 @@
+{
+  "name": "festive-invite-reel",
+  "version": "1.0.0",
+  "description": "Make personalised, beat-synced festive party invite reels (9:16) in an Indian-maximalism collage style: swatch-poster colour pairs, funky kinetic type slammed to a voice/meme intro track, a sunburst drop with illustrated cards flipping on every beat, then a second song for the details (auto-rickshaw ride, marigolds, hanging diyas, split-colour date/time/dress-code slides, venue, fireworks, end card). Personalised template: change words, dates, address, songs, palettes, festival. HTML/CSS/JS + Playwright; illustrations via the Atlabs MCP.",
+  "author": {"name": "Chinmaya", "url": "https://github.com/Chinmaya123-cyber"},
+  "homepage": "https://github.com/Chinmaya123-cyber/festive-invite-reel",
+  "repository": "https://github.com/Chinmaya123-cyber/festive-invite-reel",
+  "license": "MIT",
+  "keywords": ["diwali", "invitation", "e-invite", "party-invite", "festival", "indian-maximalism", "motion-graphics", "kinetic-typography", "beat-sync", "reels", "atlabs"]
+}

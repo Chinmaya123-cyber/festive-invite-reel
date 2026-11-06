@@ -1,0 +1,8 @@
+numpy
+scipy
+pillow
+librosa
+soundfile
+rembg[cpu]
+onnxruntime
+faster-whisper

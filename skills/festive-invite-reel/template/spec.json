@@ -1,0 +1,9 @@
+{
+  "title": "Festive Invite Reel",
+  "width": 1080,
+  "height": 1920,
+  "fps": 30,
+  "duration": 32.11,
+  "render": { "subframes": 2, "shutter": 0.4 },
+  "audio": { "music": { "file": "audio/mix.wav", "gain_db": 0, "offset": 0 } }
+}

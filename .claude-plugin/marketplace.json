@@ -1,0 +1,14 @@
+{
+  "name": "festive-invite-reel",
+  "owner": {"name": "Chinmaya", "url": "https://github.com/Chinmaya123-cyber"},
+  "metadata": {"description": "Indian-maximalism festive party invite reel skill for Claude", "version": "1.0.0"},
+  "plugins": [
+    {
+      "name": "festive-invite-reel",
+      "source": "./",
+      "description": "Personalised beat-synced Diwali / festival / party invite reels: bold swatch colours, funky type, collage stop-motion, two songs cut on the beat. Atlabs MCP for the illustrations.",
+      "version": "1.0.0",
+      "category": "creative"
+    }
+  ]
+}

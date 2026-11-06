@@ -1,0 +1,11 @@
+.DS_Store
+node_modules
+__pycache__/
+.venv/
+out/
+*.log
+*.wav
+*.mp3
+*.m4a
+refs/
+dist/

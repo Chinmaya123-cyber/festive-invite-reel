@@ -1,0 +1,563 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Festive Invite Reel</title>
+<link rel="stylesheet" href="fonts/all.css">
+<style>
+  html, body { margin: 0; background: #111; }
+  #stage { position: relative; width: 1080px; height: 1920px; overflow: hidden; background: #FF006E; }
+  .abs { position: absolute; left: 0; top: 0; }
+  .full { position: absolute; left: 0; top: 0; width: 1080px; height: 1920px; }
+  .scene { position: absolute; inset: 0; overflow: hidden; }
+  .t { position: absolute; left: 0; top: 0; white-space: nowrap; line-height: 1; text-align: center; will-change: transform; }
+  .t span { display: inline-block; white-space: pre; }
+  img.s { position: absolute; left: 0; top: 0; display: block; }
+  #grain, #paper { pointer-events: none; }
+  #hud { position: absolute; left: 12px; top: 12px; font: 600 26px/1.2 monospace; color: #fff; background: rgba(0,0,0,.55); padding: 6px 10px; z-index: 99; display: none; }
+  .card { position: absolute; left: 0; top: 0; width: 660px; height: 940px; border-radius: 34px; overflow: hidden;
+          box-shadow: 0 26px 0 rgba(42,5,24,.35), 0 0 0 10px #FFF8E8 inset; }
+  .card .inner { position: absolute; inset: 30px; border-radius: 20px; border: 5px dashed; }
+  .card .pip { position: absolute; font-family: 'Anton'; font-size: 92px; line-height: 1; }
+  .card .pip i { display: block; width: 34px; height: 34px; margin: 10px auto 0; transform: rotate(45deg); }
+  .card .word { position: absolute; left: 50%; bottom: 78px; transform: translateX(-50%); font-family: 'Anton'; font-size: 84px;
+                padding: 8px 34px 12px; border-radius: 14px; letter-spacing: .04em; white-space: nowrap; }
+  .card img { position: absolute; left: 50%; top: 46%; transform: translate(-50%,-50%); }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="hud"></div>
+<script src="timing.js"></script>
+<script src="content.js"></script>
+<script>
+(() => {
+const C = window.CONTENT;
+const W = 1080, H = 1920;
+const stage = document.getElementById('stage');
+const Q = new URLSearchParams(location.search);
+if (Q.has('hud')) document.getElementById('hud').style.display = 'block';
+
+// ---------------------------------------------------------------- timing (all from timing.js)
+const TM = window.TIMING;
+const DROP = TM.drop, DECK_BEATS = TM.deckBeats, CARD_BEATS = TM.cardBeats, JOKER = TM.joker;
+const T0 = TM.mainStart, JB = TM.beats, P = TM.plan;
+const J = k => T0 + JB[Math.min(k, JB.length - 1)] + Math.max(0, k - (JB.length - 1)) * (JB[JB.length - 1] - JB[JB.length - 2]);
+const END = TM.end;
+const SLIDE_ENDS = [...P.slides.slice(1), P.address];
+const FONT = {
+  rozha: "font-family:'Rozha One'", anton: "font-family:'Anton'", shrikhand: "font-family:'Shrikhand'", bowlby: "font-family:'Bowlby One'",
+  playfair: "font-family:'Playfair Display';font-style:italic;font-weight:900", playfairLight: "font-family:'Playfair Display';font-style:italic;font-weight:500",
+  marcellus: "font-family:'Marcellus'", bricolage: "font-family:'Bricolage Grotesque';font-weight:800;font-stretch:75%", yatra: "font-family:'Yatra One'",
+};
+const isDeva = s => /[\u0900-\u097F]/.test(s);
+
+// ---------------------------------------------------------------- maths
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, u) => a + (b - a) * u;
+const eo3 = u => 1 - Math.pow(1 - clamp(u), 3);
+const ei2 = u => clamp(u) ** 2;
+const eio = u => { u = clamp(u); return u < .5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2; };
+const step = (t, fps) => Math.floor(t * fps + 1e-6) / fps;
+const hash = n => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+const boil = (seed, t, amp = 1, fps = 8) => (hash(seed * 91.7 + Math.floor(t * fps)) * 2 - 1) * amp;
+// spring pop 0 -> 1 with overshoot (closed form)
+const pop = (t, t0, k = 1) => { const u = (t - t0) * k; if (u <= 0) return 0; return 1 - Math.exp(-u * 13) * Math.cos(u * 21); };
+// decaying wiggle after a hit
+const hit = (t, t0, f = 34, d = 9) => { const u = t - t0; if (u < 0) return 0; return Math.exp(-u * d) * Math.sin(u * f); };
+const bump = (t, beats, d = 10) => { let v = 0; for (const b of beats) { const u = t - b; if (u >= 0 && u < .6) v = Math.max(v, Math.exp(-u * d)); } return v; };
+
+// ---------------------------------------------------------------- dom helpers
+function mk(parent, tag, cls, css, html) {
+  const e = document.createElement(tag); if (cls) e.className = cls;
+  if (css) e.style.cssText = css; if (html != null) e.innerHTML = html; parent.appendChild(e); return e;
+}
+function place(e, x, y, s = 1, r = 0, o = 1, extra = '') {
+  e.style.transform = `translate(${x.toFixed(2)}px,${y.toFixed(2)}px) translate(-50%,-50%) rotate(${r.toFixed(3)}deg) scale(${Math.max(0, s).toFixed(4)})${extra}`;
+  e.style.opacity = o;
+}
+const imgs = [];
+const KERN = new Set(['WA', 'AW', 'AV', 'VA', 'TA', 'AT', 'AY', 'YA', 'LT', 'TY', 'PA', 'Y!', "'2"]);
+function im(parent, name, w, css = '') {
+  const e = mk(parent, 'img', 's', `width:${w}px;${css}`); e.src = `art/stickers/${name}.png`; imgs.push(e); return e;
+}
+function txt(parent, s, css, split = true) {
+  const e = mk(parent, 'div', 't', css);
+  if (split) { const arr = [...s]; arr.forEach((ch, i) => { const sp = mk(e, 'span', null, null, ch === ' ' ? '&nbsp;' : ch);
+    if (KERN.has((arr[i - 1] || '') + ch)) sp.style.marginLeft = '-0.08em'; }); }
+  else e.textContent = s;
+  return e;
+}
+// per-letter pop (stepped for a stop-motion feel)
+function letters(e, t, t0, { st = .028, fps = 24, drop = 40, rot = 8, seed = 1 } = {}) {
+  const ts = step(t, fps);
+  [...e.children].forEach((sp, i) => {
+    const p = pop(ts, t0 + i * st);
+    sp.style.opacity = p > 0 ? 1 : 0;
+    sp.style.transform = `translateY(${(drop * (1 - Math.min(p, 1))).toFixed(1)}px) rotate(${(rot * (1 - p) * (i % 2 ? 1 : -1) + boil(seed + i, t, .8, 6)).toFixed(2)}deg) scale(${Math.max(0, p).toFixed(3)})`;
+  });
+}
+const scenes = [];
+function scene(a, b, css = '') {
+  const root = mk(stage, 'div', 'scene', css);
+  const sc = { a, b, root, fns: [] };
+  sc.on = fn => sc.fns.push(fn);
+  scenes.push(sc); return sc;
+}
+// 4-point sparkle star
+const STAR = c => `<svg viewBox="-1 -1 2 2" width="100%" height="100%"><path fill="${c}" d="M0,-1 C.1,-.14 .14,-.1 1,0 C.14,.1 .1,.14 0,1 C-.1,.14 -.14,.1 -1,0 C-.14,-.1 -.1,-.14 0,-1Z"/></svg>`;
+function star(parent, c, size) { return mk(parent, 'div', 'abs', `width:${size}px;height:${size}px`, STAR(c)); }
+const PIN = `<svg viewBox="0 0 100 140" width="100%" height="100%"><path d="M50 136 C50 136 8 80 8 48 A42 42 0 1 1 92 48 C92 80 50 136 50 136Z" fill="#FF277F" stroke="#2A0518" stroke-width="6"/><circle cx="50" cy="48" r="17" fill="#FFF8B6" stroke="#2A0518" stroke-width="5"/></svg>`;
+
+// colour mixing for card sunbursts
+function mix(hex, to, a) {
+  const p = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+  const A = p(hex), B = p(to); return '#' + A.map((v, i) => Math.round(lerp(v, B[i], a)).toString(16).padStart(2, '0')).join('');
+}
+const burst = (a, b, at = '50% 45%', n = 10) => `repeating-conic-gradient(from 0deg at ${at}, ${a} 0 ${n}deg, ${b} ${n}deg ${2 * n}deg)`;
+
+// damask / block-print motif for the maroon fabric scenes
+const DAMASK = (() => {
+  let p = '';
+  for (let i = 0; i < 8; i++) p += `<ellipse cx="0" cy="-34" rx="13" ry="30" transform="rotate(${i * 45})"/>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240"><g fill="none" stroke="#E3A94B" stroke-opacity=".30" stroke-width="3">
+    <g transform="translate(120 120)">${p}<circle r="12"/><circle r="74" stroke-dasharray="3 11"/></g>
+    <g transform="translate(0 0)"><circle r="16"/><circle r="5" fill="#E3A94B" fill-opacity=".3"/></g><g transform="translate(240 0)"><circle r="16"/></g>
+    <g transform="translate(0 240)"><circle r="16"/></g><g transform="translate(240 240)"><circle r="16"/></g></g></svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+})();
+const WEAVE = 'repeating-linear-gradient(0deg, rgba(0,0,0,.07) 0 2px, transparent 2px 5px), repeating-linear-gradient(90deg, rgba(255,220,180,.05) 0 2px, transparent 2px 6px)';
+
+// ================================================================ SCENE A — intro: text slams synced to the intro track's voice
+{
+  const S = scene(0, DROP, `background:${C.intro.bg}`);
+  const Y = C.intro.ink;
+  const SL = C.intro.slams.map((sl, si) => {
+    const to = sl.to === 'drop' ? DROP : sl.to;
+    const o = { ...sl, to, si };
+    if (sl.lines) {
+      const sizes = Array.isArray(sl.size) ? sl.size : sl.lines.map(() => sl.size);
+      o.els = sl.lines.map((l, i) => txt(S.root, l, `${FONT[sl.font] || FONT.rozha};font-size:${sizes[i]}px;color:${sl.color || Y};letter-spacing:.02em`, !isDeva(l)));
+      o.sizes = sizes;
+    }
+    if (sl.sparkle) { o.sparks = [...Array(8)].map(() => star(S.root, Y, 200)); o.stick = (sl.stickers || []).map(n => im(S.root, n, 500)); }
+    if (sl.stars) o.corner = [...Array(4)].map(() => star(S.root, Y, 110));
+    return o;
+  });
+  S.on(t => {
+    const ts = step(t, 12);
+    const vis = (e, a, b) => (e.style.display = t >= a && t < b ? '' : 'none');
+    SL.forEach(o => {
+      if (o.els) {
+        const n = o.els.length;
+        const gap = o.sizes.map(z => z * .95);
+        const total = gap.reduce((a, b) => a + b, 0);
+        let y = 960 - total / 2;
+        const jit = o.jitter ? ([1, .93, 1.06, .96, 1.03, .97][Math.floor((ts - o.at) / .33) % 6] || 1) : 1;
+        const stepS = o.stepAt != null && ts >= o.stepAt ? 1.1 : 1;
+        o.els.forEach((e, i) => {
+          const la = o.lineAt ? o.lineAt[i] : o.at;
+          vis(e, la, o.to);
+          const cy = y + gap[i] / 2; y += gap[i];
+          let s = jit * stepS;
+          if (n === 1 && !o.zoom && o.si === 0) s *= 1 + .04 * (Math.floor(ts * 6) % 2);
+          if (o.zoom) s *= 1 + 7 * ei2((t - (o.to - .16)) / .16);
+          const single = n === 1 && (o.size >= 300);
+          if (single) { place(e, 540, 960, pop(step(t, 24), o.at) * s, (o.si % 3 - 1) * 4 + boil(50 + o.si, t, 1.5)); return; }
+          place(e, 540, cy, s, (i % 2 ? 1.5 : -2) + boil(6 + i + o.si * 7, t, 1));
+          letters(e, t, o.si === 0 && la === 0 ? -.2 : la, { st: .028 });
+        });
+      }
+      if (o.sparks) {
+        const k = o.steps.findLastIndex(s => t >= s);
+        const on = t >= o.at && t < o.to;
+        o.sparks.forEach((s, i) => {
+          s.style.display = on ? '' : 'none'; if (!on) return;
+          const h = n => hash(k * 17 + i * 3 + n), side = i % 2 ? 1 : -1;
+          place(s, 540 + side * (230 + h(1) * 290), 220 + (i / 8) * 1480 + h(2) * 120, (.45 + h(3) * .8) * pop(step(t, 24), o.steps[k] + i * .02), h(4) * 30);
+        });
+        o.stick.forEach((s, i) => { vis(s, o.steps[i], o.steps[i + 1] ?? o.to); place(s, 540 + boil(10 + i, t, 8), 960 + boil(20 + i, t, 8), pop(step(t, 24), o.steps[i]), (i % 2 ? 8 : -8) + boil(30 + i, t, 3)); });
+      }
+      if (o.corner) o.corner.forEach((s, i) => { vis(s, o.at, o.to); place(s, [150, 930, 170, 910][i], [330, 420, 1560, 1640][i], (.6 + .25 * Math.abs(Math.sin(ts * 5 + i))) * pop(t, o.at + i * .08), i * 20); });
+    });
+  });
+}
+
+// ================================================================ SCENE B — the drop: kaleido sunburst, the deck, cards flip on the beat
+{
+  const S = scene(DROP, J(P.ride));
+  const M = '#FF006E', Y = '#FFD60A';
+  const kTop = mk(S.root, 'div', 'abs', `width:2600px;height:2600px;left:-760px;top:-820px;background:${burst(M, Y, '50% 50%', 7.5)}`);
+  const kBot = mk(S.root, 'div', 'abs', `width:2600px;height:2600px;left:-760px;top:140px;background:${burst(Y, M, '50% 50%', 7.5)}`);
+  const kTopWrap = mk(S.root, 'div', 'abs', 'width:1080px;height:960px;overflow:hidden;top:0'); kTopWrap.appendChild(kTop);
+  const kBotWrap = mk(S.root, 'div', 'abs', 'width:1080px;height:960px;overflow:hidden;top:960px'); kBotWrap.appendChild(kBot);
+  kBot.style.top = '-1300px';
+  // deck
+  const deckW = 560;
+  const deck = mk(S.root, 'div', 'abs', `width:${deckW}px;height:${deckW * 1400 / 950}px`);
+  const dimg = im(deck, 'deck', deckW, 'position:absolute;left:0;top:0');
+  mk(deck, 'div', 'abs', `left:${deckW * .375}px;top:${deckW * 1.474 * .135}px;width:${deckW * .555}px;height:${deckW * 1.474 * .1}px;display:flex;align-items:center;justify-content:center;
+     font-family:'Bowlby One';font-size:40px;color:${Y};text-shadow:3px 3px 0 #2A0518;transform:skewY(-3deg);white-space:nowrap`, C.deck.title);
+  const ring = mk(S.root, 'div', 'abs', `width:900px;height:900px;border-radius:50%;border:26px solid #FFF8B6`);
+  const topT = txt(S.root, C.deck.top, `font-family:'Shrikhand';font-size:150px;color:${Y};-webkit-text-stroke:14px #2A0518;paint-order:stroke fill;text-shadow:8px 10px 0 #2A0518`);
+  const pill = mk(S.root, 'div', 't', `font-family:'Anton';font-size:58px;color:#2A0518;background:#FFF8B6;padding:10px 30px 14px;border-radius:60px;letter-spacing:.12em;box-shadow:6px 8px 0 #2A0518`, C.deck.pill);
+  const sparks = [...Array(6)].map(() => star(S.root, '#FFF8B6', 120));
+  // cards
+  const cards = C.cards.map((c, i) => {
+    const e = mk(S.root, 'div', 'card', `background:${burst(c.bg, mix(c.bg, '#ffffff', .22), '50% 46%', 9)}`);
+    mk(e, 'div', 'inner', `border-color:${c.ink}`);
+    mk(e, 'div', 'pip', `left:56px;top:50px;color:${c.ink}`, `${c.pip}<i style="background:${c.ink}"></i>`);
+    mk(e, 'div', 'pip', `right:56px;bottom:50px;color:${c.ink};transform:rotate(180deg)`, `${c.pip}<i style="background:${c.ink}"></i>`);
+    const tall = ['girl', 'boy', 'sparkler', 'rocket'].includes(c.art);
+    im(e, c.art, tall ? 330 : 450, 'position:absolute;left:50%;top:44%;transform:translate(-50%,-50%);filter:drop-shadow(10px 14px 0 rgba(42,5,24,.28))');
+    mk(e, 'div', 'word', `background:${c.ink};color:${c.bg};font-size:${c.word.length > 8 ? 72 : 84}px`, c.word);
+    return e;
+  });
+  const JK = C.joker;
+  const jk = mk(S.root, 'div', 'card', `background:${burst(JK.bg, mix(JK.bg, '#ffffff', .2), '50% 46%', 9)}`);
+  mk(jk, 'div', 'inner', `border-color:${JK.ink}`);
+  mk(jk, 'div', 'pip', `left:50px;top:46px;color:${JK.ink}`, `★`);
+  mk(jk, 'div', 'pip', `right:50px;bottom:46px;color:${JK.ink};transform:rotate(180deg)`, `★`);
+  mk(jk, 'div', 'abs', `left:0;top:170px;width:660px;text-align:center;font-family:'Bricolage Grotesque';font-weight:800;font-stretch:75%;font-size:150px;line-height:.9;color:${JK.ink};text-shadow:6px 8px 0 #2A0518`, JK.lines.join('<br>'));
+  im(jk, JK.art, 330, 'position:absolute;left:50%;top:70%;transform:translate(-50%,-50%);filter:drop-shadow(10px 14px 0 rgba(42,5,24,.28))');
+  const tilt = C.cards.map((_, i) => [-5, 4, -3, 5, -4, 3, -5, 4][i % 8]);
+  S.on(t => {
+    const beatsAll = [DROP, ...DECK_BEATS, ...CARD_BEATS, JOKER];
+    const b = bump(t, beatsAll, 7);
+    const ang = t * 22;
+    kTop.style.transform = `rotate(${ang}deg) scale(${1 + .05 * b})`;
+    kBot.style.transform = `rotate(${-ang}deg) scale(${1 + .05 * b})`;
+    // deck fall, land, wiggle, burst
+    const deckOn = t < CARD_BEATS[0] + .16;
+    deck.style.display = deckOn ? '' : 'none';
+    if (deckOn) {
+      const ts = step(t, 24);
+      const fall = ei2((ts - DROP) / .32);
+      let y = lerp(-700, 1010, fall);
+      const land = DROP + .32;
+      const sq = ts > land ? Math.exp(-(ts - land) * 9) * Math.cos((ts - land) * 30) : 0;
+      let r = 0; DECK_BEATS.forEach((bt, i) => r += 7 * (i % 2 ? -1 : 1) * hit(ts, bt));
+      const out = clamp((t - CARD_BEATS[0]) / .16);
+      deck.style.transformOrigin = '50% 100%';
+      place(deck, 540, y, 1 + .7 * eo3(out), r + boil(70, t, .8), 1 - out, ` scaleY(${1 - .14 * sq}) scaleX(${1 + .1 * sq})`);
+    }
+    const ru = (t - CARD_BEATS[0]) / .35;
+    ring.style.display = ru > 0 && ru < 1 ? '' : 'none'; place(ring, 540, 960, .3 + 1.2 * eo3(ru), 0, 1 - ru);
+    const topOn = t >= DECK_BEATS[0] && t < CARD_BEATS[0];
+    topT.style.display = topOn ? '' : 'none'; place(topT, 540, 330, 1, -4 + boil(71, t, 1.2)); letters(topT, t, DECK_BEATS[0], { st: .03 });
+    pill.style.display = t >= DECK_BEATS[1] && t < CARD_BEATS[0] ? '' : 'none'; place(pill, 540, 1680, pop(step(t, 24), DECK_BEATS[1]), 3 + boil(72, t, 1));
+    sparks.forEach((s, i) => {
+      const on = t >= DROP + .32 && t < CARD_BEATS[0];
+      s.style.display = on ? '' : 'none';
+      const a = i / 6 * Math.PI * 2 + .4;
+      place(s, 540 + Math.cos(a) * 400, 1010 + Math.sin(a) * 520, (.5 + .4 * Math.abs(Math.sin(step(t, 8) * 4 + i))) * pop(t, DROP + .32 + i * .03), i * 15);
+    });
+    // cards: one per beat, quick flip-in, stop-motion boil
+    cards.forEach((e, i) => {
+      const a = CARD_BEATS[i], z = i < cards.length - 1 ? CARD_BEATS[i + 1] : JOKER; if (a == null) { e.style.display = 'none'; return; }
+      const on = t >= a && t < z; e.style.display = on ? '' : 'none'; if (!on) return;
+      const u = eo3((step(t, 24) - a) / .1);
+      place(e, 540 + boil(80 + i, t, 4), 960 + boil(90 + i, t, 4), 1.12 - .12 * u, tilt[i] + boil(100 + i, t, .8), 1, ` perspective(1600px) rotateY(${(1 - u) * 85}deg)`);
+    });
+    const jon = t >= JOKER; jk.style.display = jon ? '' : 'none';
+    if (jon) {
+      const u = eo3((step(t, 24) - JOKER) / .1);
+      const z = ei2((t - (J(P.ride) - .11)) / .11);
+      place(jk, 540, 960, (1.12 - .12 * u) * (1 + 6 * z), lerp(-3, 0, z), 1, ` perspective(1600px) rotateY(${(1 - u) * 85}deg)`);
+    }
+  });
+}
+
+// ================================================================ SCENE C+D — main song kicks in: auto ride, NEXT STOP?, marigold strings, footprints
+{
+  const R = k => J(P.ride + k);
+  const S = scene(R(0), J(P.title), `background-color:#7A0F33`);
+  const bg = mk(S.root, 'div', 'full', `background-image:${DAMASK}, ${WEAVE};background-size:240px 240px, auto`);
+  mk(S.root, 'div', 'full', 'background:radial-gradient(ellipse at 50% 45%, rgba(255,0,110,.22), rgba(20,0,8,.55) 75%)');
+  const speed = [...Array(7)].map(() => mk(S.root, 'div', 'abs', 'height:8px;border-radius:8px;background:#FFF8B6'));
+  const puffs = [...Array(8)].map(() => mk(S.root, 'div', 'abs', 'width:70px;height:70px;border-radius:50%;background:#F2D2A2'));
+  const shadow = mk(S.root, 'div', 'abs', 'width:760px;height:60px;border-radius:50%;background:rgba(20,0,8,.45);filter:blur(6px)');
+  const auto = im(S.root, 'auto', 940);
+  const call = txt(S.root, C.ride.call, `font-family:'Shrikhand';font-size:104px;color:#FFF8B6;text-shadow:7px 8px 0 #2A0518`);
+  const reply = mk(S.root, 'div', 't', `font-family:'Bowlby One';font-size:86px;color:#2A0518;background:#FFD60A;padding:22px 40px 30px;border-radius:70px;box-shadow:8px 10px 0 #2A0518`, C.ride.reply);
+  // NEXT STOP? — two lines, font flips every beat
+  const fonts = [
+    `font-family:'Playfair Display';font-style:italic;font-weight:900;font-size:180px`,
+    `font-family:'Anton';font-size:230px;letter-spacing:.02em`,
+    `font-family:'Shrikhand';font-size:170px`,
+    `font-family:'Marcellus';font-size:150px;letter-spacing:.1em`,
+    `font-family:'Bowlby One';font-size:140px`,
+  ];
+  const ns = fonts.map((f, i) => mk(S.root, 'div', 't', `${f};line-height:.95;color:${i === 3 ? '#FFF8B6' : '#FFD60A'};text-shadow:8px 10px 0 #2A0518`, C.ride.nextStop.join('<br>')));
+  const gNames = ['garland1', 'garland2', 'garland3', 'garland2', 'garland1', 'garland3'];
+  const gX = [50, 165, 915, 1030];
+  const gar = gX.map((x, i) => im(S.root, gNames[i], 150, 'transform-origin:50% 0'));
+  const feet = [['footL', 470, 1660, -8], ['footR', 610, 1520, 6], ['footL', 480, 1360, -6]].map(f => ({ e: im(S.root, f[0], 130), x: f[1], y: f[2], r: f[3] }));
+  S.on(t => {
+    const ts = step(t, 12);
+    bg.style.backgroundPosition = `${-step(t, 24) * 260}px 0, 0 0`;
+    // auto path: in from left, park, zoom out right
+    let ax;
+    if (t < R(3)) ax = lerp(-560, 540, eo3((t - R(0)) / (R(3) - R(0))));
+    else if (t < R(4)) ax = 540;
+    else ax = lerp(540, 1750, ei2((t - R(4)) / (R(6) - R(4))));
+    const moving = t < R(3) - .1 || t > R(4);
+    const bob = -Math.abs(Math.sin((ts - R(0)) * Math.PI / .49)) * 10;
+    const autoOn = t < R(6) + .05;
+    auto.style.display = shadow.style.display = autoOn ? '' : 'none';
+    place(auto, ax, 1040 + bob, 1, boil(200, t, .7) + (moving ? -.8 : 0));
+    place(shadow, ax + 20, 1385, 1, 0, .9);
+    speed.forEach((s, i) => {
+      const on = autoOn && moving; s.style.display = on ? '' : 'none'; if (!on) return;
+      const len = 120 + hash(i) * 200, y = 760 + i * 80 + hash(i + 9) * 30;
+      s.style.width = len + 'px';
+      place(s, ax - 520 - hash(i + 3) * 160 - ((ts * 900 + i * 70) % 160), y, 1, 0, .55);
+    });
+    puffs.forEach((p, i) => {
+      const life = .5, ph = ((ts - R(0)) + i * life / 8) % life, born = ts - ph;
+      const on = autoOn && moving && t > R(0) + .1; p.style.display = on ? '' : 'none'; if (!on) return;
+      let bx; if (born < R(3)) bx = lerp(-560, 540, eo3((born - R(0)) / (R(3) - R(0)))); else bx = lerp(540, 1750, ei2((born - R(4)) / (R(6) - R(4))));
+      place(p, bx - 420 - ph * 260, 1350 - ph * 120, .4 + ph * 2.2, 0, .55 * (1 - ph / life));
+    });
+    call.style.display = t >= R(0) + .05 && t < R(3) ? '' : 'none'; place(call, 540, 420, 1, -3 + boil(201, t, 1)); letters(call, t, R(0) + .05, { st: .025 });
+    reply.style.display = t >= R(2) && t < R(4) ? '' : 'none'; place(reply, Math.min(ax + 160, 860), 620, pop(step(t, 24), R(2)), 5 + boil(202, t, 1.5));
+    // NEXT STOP?: revealed behind the auto as it drives off, then the font flips on every beat
+    const k = clamp(JB.findLastIndex(b => t >= T0 + b) - (P.ride + 6), 0, 4);
+    ns.forEach((e, i) => {
+      const on = t >= R(4) && i === k; e.style.display = on ? '' : 'none'; if (!on) return;
+      const rear = ax - 430;
+      const wR = 540 + e.offsetWidth / 2 + 60; e.style.clipPath = t < R(6) ? `inset(-80px ${Math.max(0, wR - rear)}px -80px -80px)` : 'none';
+      const kick = t >= R(6) ? 1 + .1 * bump(t, [R(6 + i)], 14) : 1;
+      place(e, 540, 960, kick, -2 + boil(210 + i, t, 1));
+    });
+    // marigold strings slide in from the right, sway from the top
+    gar.forEach((g, i) => {
+      const t0 = R(7) + i * .05;
+      const on = t >= t0; g.style.display = on ? '' : 'none'; if (!on) return;
+      const u = clamp((step(t, 24) - t0) / .22);
+      const xx = lerp(1250 + i * 120, gX[i], eo3(u)) + Math.sin(u * Math.PI) * -40;
+      g.style.transformOrigin = '50% 0';
+      g.style.transform = `translate(${xx - 75}px,-30px) rotate(${(Math.sin(t * 2.6 + i) * 1.4 + boil(220 + i, t, .5)).toFixed(2)}deg)`;
+    });
+    // footprints step in on beats 8, 9, 10
+    feet.forEach((f, i) => {
+      const t0 = R(8 + i); const on = t >= t0; f.e.style.display = on ? '' : 'none'; if (!on) return;
+      place(f.e, f.x, f.y, 1.35 - .35 * clamp((step(t, 24) - t0) / .08), f.r + boil(230 + i, t, 1.5));
+    });
+  });
+}
+
+// ================================================================ SCENE E — hanging diyas drop, the title
+{
+  const S = scene(J(P.title), J(P.slides[0]), 'background:#5A0A2E');
+  mk(S.root, 'div', 'full', `background-image:${DAMASK};background-size:240px 240px;opacity:.6`);
+  mk(S.root, 'div', 'full', 'background:radial-gradient(circle at 50% 56%, rgba(255,0,110,.55), rgba(90,10,46,0) 55%)');
+  const rang = mk(S.root, 'div', 'abs', `width:1000px;height:1000px;border-radius:50%;background:${'repeating-conic-gradient(from 0deg, rgba(255,214,10,.16) 0 6deg, rgba(255,214,10,0) 6deg 12deg)'};-webkit-mask:radial-gradient(circle, #000 35%, transparent 70%)`);
+  const lamps = [[130, 300], [320, 470], [540, 250], [760, 470], [950, 300]].map(([x, L], i) => {
+    const w = mk(S.root, 'div', 'abs', `width:180px;transform-origin:90px 0;left:${x - 90}px;top:0`);
+    mk(w, 'div', 'abs', `left:88px;top:0;width:4px;height:${L}px;background:#C7A267`);
+    im(w, 'hangdiya', 180, `top:${L - 20}px`);
+    return { w, L, i };
+  });
+  const tA = txt(S.root, C.title.a, `font-family:'Rozha One';font-size:270px;color:#FFD60A;text-shadow:10px 12px 0 #2A0518`);
+  const tB = txt(S.root, C.title.b, `font-family:'Shrikhand';font-size:240px;color:#FF277F;-webkit-text-stroke:12px #FFF8B6;paint-order:stroke fill;text-shadow:10px 12px 0 #2A0518`);
+  const tH = txt(S.root, C.title.hi || '', `font-family:'Yatra One';font-size:96px;color:#FFF8B6;text-shadow:5px 6px 0 #2A0518`, false);
+  const tw = [...Array(6)].map(() => star(S.root, '#FFD60A', 90));
+  S.on(t => {
+    place(rang, 540, 1080, .9 + .1 * pop(t, J(P.title)), t * 14, 1);
+    lamps.forEach(({ w, i }) => {
+      const t0 = J(P.title) + i * .045, u = step(t, 24) - t0;
+      const dy = u < 0 ? -900 : lerp(-900, 0, 1 - Math.exp(-u * 11) * Math.cos(u * 16));
+      w.style.transform = `translateY(${dy.toFixed(1)}px) rotate(${(u > 0 ? 7 * Math.exp(-u * 2.2) * Math.sin(u * 7 + i) : 0).toFixed(2)}deg)`;
+    });
+    place(tA, 540, 960, 1, -3 + boil(300, t, 1)); letters(tA, t, J(P.title) + .02, { st: .035 });
+    place(tB, 540, 1200, 1, 3 + boil(301, t, 1)); letters(tB, t, J(P.title + 1), { st: .035 });
+    tH.style.display = t >= J(P.title + 2) ? '' : 'none'; place(tH, 540, 1420, pop(step(t, 24), J(P.title + 2)), boil(302, t, 1.5));
+    tw.forEach((s, i) => place(s, [120, 960, 200, 880, 90, 990][i], [760, 700, 1530, 1560, 1150, 1180][i], (.5 + .35 * Math.abs(Math.sin(step(t, 8) * 5 + i * 1.7))) * pop(t, J(P.title) + .1 + i * .05), i * 12));
+  });
+}
+
+// ================================================================ split-panel info cards (swatch-poster style)
+function splitScene(a, b, top, bot, fromLeft, build) {
+  const S = scene(a, b, `background:${bot}`);
+  const P1 = mk(S.root, 'div', 'abs', `width:1080px;height:960px;background:${top}`);
+  const P2 = mk(S.root, 'div', 'abs', `width:1080px;height:960px;top:960px;background:${bot}`);
+  const grainy = mk(S.root, 'div', 'full', 'background:radial-gradient(ellipse at 50% 50%, rgba(255,255,255,.10), rgba(0,0,0,.12) 80%)');
+  const upd = build(S);
+  S.on(t => {
+    const u = eo3((step(t, 24) - a) / .14);
+    P1.style.transform = `translateX(${(fromLeft ? -1 : 1) * 1080 * (1 - u)}px)`;
+    P2.style.transform = `translateX(${(fromLeft ? 1 : -1) * 1080 * (1 - u)}px)`;
+    upd(t);
+  });
+}
+// one generic split slide per content.slides entry; beat offsets are relative to the slide's first beat
+C.slides.forEach((sd, si) => {
+  const b0 = P.slides[si], b1 = SLIDE_ENDS[si];
+  if (b0 == null) return;
+  const B = x => { const k = Math.floor(x), f = x - k; return J(b0 + k) + f * (J(b0 + k + 1) - J(b0 + k)); };
+  splitScene(J(b0), J(b1), sd.top, sd.bot, sd.fromLeft, S => {
+    const T = (o, deva) => o && txt(S.root, o.text, `${FONT[o.font] || FONT.anton};font-size:${o.size}px;color:${o.color};letter-spacing:${o.spacing || 'normal'}${o.slam ? ';text-shadow:12px 14px 0 rgba(42,5,24,.35)' : ''}`, !deva && !isDeva(o.text));
+    const lab = sd.label && T(sd.label, sd.label.font && sd.label.font.startsWith('playfair'));
+    const big = T(sd.big), sub = T(sd.sub);
+    const note = sd.note && txt(S.root, sd.note.text, `${FONT.playfair};font-weight:800;font-size:${sd.note.size || 80}px;color:${sd.note.color}`, false);
+    const st = (sd.stickers || []).map(k => ({ ...k, e: im(S.root, k.art, k.w) }));
+    return t => {
+      if (lab) { place(lab, 540, sd.label.y || 210, sd.label.font && sd.label.font.startsWith('playfair') ? pop(step(t, 24), B(.05)) : 1, sd.label.font && sd.label.font.startsWith('playfair') ? -3 : 0); if (lab.children.length) letters(lab, t, B(.06), { st: .02 }); }
+      if (big) {
+        const y = sd.big.y || 600, stretch = sd.big.stretch ? ` scaleY(${sd.big.stretch})` : '';
+        if (sd.big.slam) place(big, 540, y, 1.25 - .25 * clamp((step(t, 24) - B(.08)) / .1), -3 + boil(400 + si, t, 1), t >= B(.08) ? 1 : 0, stretch);
+        else { place(big, 540, y, 1, (si % 2 ? 2 : 0) + boil(410 + si, t, 1), 1, stretch); letters(big, t, B(.08), { st: .035, drop: 70 }); }
+      }
+      if (sub) { place(sub, 540, sd.sub.y || 1225, 1, (si % 2 ? -2 : 2) + boil(420 + si, t, 1)); letters(sub, t, B(.15), { st: .03 }); }
+      if (note) { const na = B(sd.note.at ?? 1); note.style.display = t >= na ? '' : 'none'; place(note, 540, sd.note.y || 1450, pop(step(t, 24), na), si % 2 ? 3 : -4); }
+      st.forEach((k, j) => place(k.e, k.x, k.y, pop(step(t, 24), B(k.at ?? .2)), k.r + boil(430 + si * 5 + j, t, 3)));
+    };
+  });
+});
+
+// ================================================================ ADDRESS — venue illustration + address card
+{
+  const S = scene(J(P.address), J(P.finale), 'background:#5A0A2E');
+  const tw = mk(S.root, 'img', 'abs', 'width:1080px;height:1920px;object-fit:cover'); tw.src = C.address.scene; imgs.push(tw);
+  mk(S.root, 'div', 'full', 'background:linear-gradient(180deg, rgba(42,5,24,0) 52%, rgba(42,5,24,.65) 100%)');
+  const pin = mk(S.root, 'div', 'abs', 'width:120px;height:168px', PIN);
+  const kah = txt(S.root, C.address.ask, `font-family:'Playfair Display';font-style:italic;font-weight:800;font-size:96px;color:#FFF8B6;text-shadow:6px 7px 0 #2A0518`, false);
+  const card = mk(S.root, 'div', 'abs', 'width:860px;height:560px;background:#94DEFF;border-radius:40px;box-shadow:14px 16px 0 #2A0518');
+  const L = C.address.lines;
+  const rows = [
+    txt(S.root, L[0], `font-family:'Anton';font-size:128px;color:#FF277F`),
+    txt(S.root, L[1], `font-family:'Anton';font-size:128px;color:#FF277F`),
+    txt(S.root, L[2], `font-family:'Bricolage Grotesque';font-weight:800;font-stretch:75%;font-size:96px;color:#2A0518`),
+    txt(S.root, L[3], `font-family:'Bricolage Grotesque';font-weight:800;font-stretch:75%;font-size:96px;color:#2A0518`),
+  ];
+  const rt = [J(P.address) + .12, J(P.address) + .36, J(P.address + 1) + .1, J(P.address + 1) + .34];
+  S.on(t => {
+    const u = eo3((step(t, 24) - J(P.address)) / .22);
+    tw.style.transform = `translateY(${(1 - u) * 1920}px) scale(${1 + .05 * clamp((t - J(P.address)) / 2)})`;
+    tw.style.transformOrigin = '50% 40%';
+    const pu = step(t, 24) - J(P.address + 1) - .3;
+    const py = pu < 0 ? -300 : lerp(-300, 700, 1 - Math.exp(-pu * 10) * Math.cos(pu * 14));
+    place(pin, 540, py, 1, boil(500, t, 2));
+    place(kah, 540, 1060, pop(step(t, 24), J(P.address) + .05), -4 + boil(501, t, 1));
+    place(card, 540, 1470, pop(step(t, 24), J(P.address) + .08) , -2);
+    rows.forEach((e, i) => { place(e, 540, [1290, 1410, 1535, 1640][i], 1, -2); letters(e, t, rt[i], { st: .02 }); });
+  });
+}
+
+// ================================================================ FINALE — see you there + greeting + fireworks
+{
+  const S = scene(J(P.finale), J(P.end), 'background:#C8154B');
+  mk(S.root, 'div', 'full', `background:${burst('#C8154B', '#B8123F', '50% 40%', 6)};opacity:.9`);
+  const fw = [[230, 340, 0], [860, 300, 1], [130, 1500, 2], [960, 1460, 3], [540, 200, 3.5]].map(([x, y, k]) => ({ e: im(S.root, 'firework', 520), x, y, k }));
+  const a = txt(S.root, C.finale.a, `font-family:'Bricolage Grotesque';font-weight:800;font-stretch:75%;font-size:190px;color:#FFF8B6;text-shadow:8px 10px 0 #5A0A2E`);
+  const b = txt(S.root, C.finale.b, `font-family:'Shrikhand';font-size:230px;color:#FFF8B6;text-shadow:8px 10px 0 #5A0A2E`);
+  const c = txt(S.root, C.finale.c, `font-family:'Playfair Display';font-style:italic;font-weight:900;font-size:150px;color:#FFD60A;text-shadow:6px 8px 0 #5A0A2E`);
+  const d = txt(S.root, C.finale.d, `font-family:'Rozha One';font-size:260px;color:#FFD60A;text-shadow:8px 10px 0 #5A0A2E`);
+  const auto = im(S.root, 'auto', 520);
+  S.on(t => {
+    fw.forEach(f => {
+      const t0 = J(P.finale + Math.floor(f.k)) + (f.k % 1 ? .24 : 0);
+      const u = step(t, 24) - t0; f.e.style.display = u >= 0 ? '' : 'none';
+      place(f.e, f.x, f.y, .2 + 1.0 * eo3(u / .3), u * 30, clamp(1.4 - u * .9));
+    });
+    place(a, 540, 640, 1, -3 + boil(600, t, 1)); letters(a, t, J(P.finale) + .02, { st: .03 });
+    place(b, 540, 850, 1, 2 + boil(601, t, 1)); letters(b, t, J(P.finale + 1), { st: .04 });
+    place(c, 540, 1130, 1, -5); letters(c, t, J(P.finale + 2), { st: .03 });
+    place(d, 540, 1320, 1, 2 + boil(602, t, 1)); letters(d, t, J(P.finale + 2) + .2, { st: .035 });
+    const ts = step(t, 12);
+    place(auto, lerp(-320, 1400, (t - J(P.finale)) / (J(P.end) - J(P.finale))), 1640 - Math.abs(Math.sin(ts * 6.4)) * 8, 1, boil(603, t, .7));
+  });
+}
+
+// ================================================================ END CARD — everything in one screenshot-able frame
+{
+  const S = scene(J(P.end), END + 1, 'background:#FF006E');
+  const sb = mk(S.root, 'div', 'abs', `width:2600px;height:2600px;left:-760px;top:-340px;background:${burst('#FF006E', '#F00068', '50% 50%', 6)}`);
+  const gl = im(S.root, 'garland1', 120, 'transform-origin:50% 0'), gr = im(S.root, 'garland3', 120, 'transform-origin:50% 0');
+  const lamps = [[250, 170], [830, 170]].map(([x, L], i) => {
+    const w = mk(S.root, 'div', 'abs', `width:150px;transform-origin:75px 0;left:${x - 75}px;top:0`);
+    mk(w, 'div', 'abs', `left:73px;top:0;width:4px;height:${L}px;background:#C7A267`); im(w, 'hangdiya', 150, `top:${L - 16}px`); return w;
+  });
+  const t1 = txt(S.root, C.endcard.title[0], `font-family:'Rozha One';font-size:230px;color:#FFD60A;text-shadow:9px 11px 0 #2A0518`);
+  const t2 = txt(S.root, C.endcard.title[1], `font-family:'Shrikhand';font-size:170px;color:#FFF8B6;text-shadow:8px 10px 0 #2A0518`);
+  const panel = mk(S.root, 'div', 'abs', 'width:820px;height:640px;background:#FFD60A;border-radius:44px;box-shadow:14px 16px 0 #2A0518');
+  const rows = C.endcard.rows.map(([icon, label], i) => {
+    const r = mk(S.root, 'div', 'abs', `display:flex;align-items:center;gap:22px;width:720px;white-space:nowrap`);
+    if (icon) { const e = im(r, icon, 92, 'position:static;flex:none;width:92px;height:92px;object-fit:contain'); }
+    else mk(r, 'div', null, 'width:92px;flex:none');
+    mk(r, 'div', null, `font-family:'Anton';font-size:${icon ? 62 : 48}px;color:${icon ? '#FF006E' : '#C8154B'};letter-spacing:.02em`, label);
+    return r;
+  });
+  const sign = txt(S.root, C.endcard.sign, `font-family:'Playfair Display';font-style:italic;font-weight:800;font-size:96px;color:#FFD60A;text-shadow:6px 7px 0 #2A0518`, false);
+  const tw = [...Array(5)].map(() => star(S.root, '#FFF8B6', 80));
+  S.on(t => {
+    const a = J(P.end);
+    sb.style.transform = `rotate(${t * 10}deg)`;
+    gl.style.transform = `translate(${-26}px,${-40 + (1 - eo3((step(t, 24) - a) / .25)) * -1900}px) rotate(${Math.sin(t * 2.2) * 1.2}deg)`;
+    gr.style.transform = `translate(${1080 - 94}px,${-40 + (1 - eo3((step(t, 24) - a - .06) / .25)) * -1900}px) rotate(${Math.sin(t * 2.2 + 1) * 1.2}deg)`;
+    lamps.forEach((w, i) => { const u = step(t, 24) - a - .1 - i * .05; const dy = u < 0 ? -500 : lerp(-500, 0, 1 - Math.exp(-u * 11) * Math.cos(u * 16));
+      w.style.transform = `translateY(${dy}px) rotate(${u > 0 ? 6 * Math.exp(-u * 2) * Math.sin(u * 7 + i) : 0}deg)`; });
+    place(t1, 540, 470, 1, -3); letters(t1, t, a + .02, { st: .03 });
+    place(t2, 540, 660, 1, 2); letters(t2, t, a + .2, { st: .035 });
+    place(panel, 540, 1180, pop(step(t, 24), a + .25), -1.5);
+    rows.forEach((r, i) => place(r, 540, 940 + i * 115 - (C.endcard.rows[i][0] ? 0 : 25 * (i > 0)), pop(step(t, 24), a + .4 + i * .1), -1.5));
+    place(sign, 540, 1660, pop(step(t, 24), J(P.end + 1) + .2), -3 + boil(700, t, 1));
+    tw.forEach((s, i) => place(s, [130, 950, 90, 990, 540][i], [860, 840, 1560, 1520, 1780][i], (.5 + .35 * Math.abs(Math.sin(step(t, 8) * 5 + i))) * pop(t, a + .5 + i * .06), i * 18));
+  });
+}
+
+// ================================================================ global texture: paper + animated grain + shake
+const paper = mk(stage, 'div', 'full', `background:url(art/paper.png) 0 0 / 1080px 1920px;mix-blend-mode:soft-light;opacity:.55`); paper.id = 'paper';
+const grain = mk(stage, 'div', 'full', `mix-blend-mode:overlay;opacity:.22`); grain.id = 'grain';
+mk(stage, 'div', 'full', 'box-shadow: inset 0 0 220px rgba(30,0,12,.35)');
+const SHAKES = [DROP, J(P.ride), J(P.title), ...P.slides.map(J), J(P.address), J(P.finale), J(P.end)];
+
+function seek(t) {
+  for (const s of scenes) {
+    const on = t >= s.a && t < s.b; s.root.style.display = on ? '' : 'none';
+    if (on) s.fns.forEach(f => f(t));
+  }
+  const k = Math.floor(t * 12) % 4;
+  grain.style.background = `url(art/grain${k}.png) ${(hash(k) * 300) | 0}px ${(hash(k + 5) * 300) | 0}px / 1080px 1920px`;
+  let sx = 0, sy = 0; for (const b of SHAKES) { const u = t - b; if (u >= 0 && u < .25) { const e = Math.exp(-u * 18) * 16; sx += e * Math.sin(u * 90); sy += e * Math.cos(u * 70); } }
+  stage.style.transform = `translate(${sx.toFixed(1)}px,${sy.toFixed(1)}px) scale(${sx || sy ? 1.03 : 1})`;
+  document.getElementById('hud').textContent = t.toFixed(2) + 's';
+}
+
+const ready = (async () => {
+  const fams = [`'Anton'`, `'Rozha One'`, `'Shrikhand'`, `'Yatra One'`, `'Bowlby One'`, `'Marcellus'`];
+  await Promise.all([
+    ...fams.map(f => document.fonts.load(`100px ${f}`, 'ABCनमस्ते')),
+    document.fonts.load(`italic 900 100px 'Playfair Display'`), document.fonts.load(`italic 500 100px 'Playfair Display'`),
+    document.fonts.load(`800 100px 'Bricolage Grotesque'`),
+    document.fonts.load(`100px 'Yatra One'`, 'दिवाली पार्टी नमस्ते'),
+  ]);
+  await Promise.all(imgs.map(i => i.decode().catch(() => {})));
+  for (let k = 0; k < 4; k++) { const i = new Image(); i.src = `art/grain${k}.png`; await i.decode().catch(() => {}); }
+  await document.fonts.ready;
+  seek(0);
+})();
+
+const stills = [
+  ...C.intro.slams.map((sl, i) => [Math.min((sl.at + (sl.to === 'drop' ? DROP : sl.to)) / 2, DROP - .1), 'slam ' + (i + 1)]),
+  [DROP + .35, 'deck fall'], [DECK_BEATS[1] + .2, 'deck'], [CARD_BEATS[0] + .2, 'card 1'], [CARD_BEATS[3] + .2, 'card 4'], [JOKER + .2, 'joker'],
+  [J(P.ride + 1), 'auto in'], [J(P.ride + 3) + .2, 'auto park'], [J(P.ride + 5), 'next stop reveal'], [J(P.ride + 8) + .2, 'garlands'], [J(P.ride + 10) + .2, 'footprints'],
+  [J(P.title + 1) + .3, 'title'], ...P.slides.map((b, i) => [J(SLIDE_ENDS[i]) - .15, 'slide ' + (i + 1)]), [J(P.address + 2), 'address'],
+  [J(P.finale + 2) + .5, 'finale'], [J(P.end + 2), 'end card'], [END - .1, 'last frame'],
+].map(([t, label]) => ({ t, label }));
+
+window.__motion = { ready, seek: async t => { seek(t); }, cues: [], stills, duration: END };
+
+// live preview: ?play
+if (!Q.has('render')) {
+  const audio = new Audio('audio/mix.wav');
+  let t0 = null;
+  document.addEventListener('keydown', e => { if (e.code === 'Space') { if (audio.paused) { audio.play(); } else audio.pause(); } });
+  const loop = () => { seek(audio.currentTime); requestAnimationFrame(loop); };
+  ready.then(() => { if (Q.has('play')) audio.play(); loop(); });
+}
+})();
+</script>
+</body>
+</html>
